@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GTM Detective — dataLayer → GA4</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">🕵</span>
+      <div>
+        <h1>GTM Detective</h1>
+        <p class="sub">dataLayer &rarr; Google Analytics 4 event &amp; field renames</p>
+      </div>
+    </div>
+    <div class="actions">
+      <label class="btn">Load container JSON
+        <input id="fileInput" type="file" accept=".json,application/json" hidden />
+      </label>
+      <button id="btnSample" class="btn ghost">Reload sample</button>
+      <button id="btnFit" class="btn ghost">Fit</button>
+      <button id="btnPng" class="btn ghost">Export PNG</button>
+      <button id="btnPrivacy" class="btn ghost">Privacy</button>
+    </div>
+  </header>
+
+  <section id="stats" class="stats"></section>
+
+  <div class="toolbar">
+    <input id="search" class="search" type="text" placeholder="Search event / field / tag name…" />
+    <span id="searchCount" class="muted small"></span>
+    <label class="chk"><input id="toggleEvents" type="checkbox" checked /> Event names</label>
+    <label class="chk"><input id="toggleFields" type="checkbox" checked /> Event fields</label>
+    <label class="chk"><input id="toggleUserProps" type="checkbox" checked /> User properties</label>
+    <label class="chk"><input id="toggleSettingsVars" type="checkbox" checked /> Event settings</label>
+    <label class="chk"><input id="renamesOnly" type="checkbox" /> Renames only</label>
+    <span class="source">Source: <b id="sourceName">—</b></span>
+  </div>
+
+  <main class="main">
+    <div id="cy" class="canvas"></div>
+    <aside class="panel">
+      <div id="detail" class="detail"></div>
+      <div class="legend">
+        <h4>Legend</h4>
+        <ul>
+          <li><span class="sw ev"></span> dataLayer event</li>
+          <li><span class="sw fl"></span> dataLayer field</li>
+          <li><span class="sw tag"></span> GA4 tag</li>
+          <li><span class="sw gaev"></span> GA4 event</li>
+          <li><span class="sw gafl"></span> GA4 field</li>
+          <li><span class="sw tr"></span> transform (JS / table)</li>
+          <li><span class="sw const"></span> constant value</li>
+          <li><span class="sw builtin"></span> built-in / other var</li>
+          <li><span class="sw userprop"></span> GA4 user property</li>
+          <li><span class="sw esv"></span> Event Settings var</li>
+        </ul>
+        <ul class="edges">
+          <li><span class="line rename"></span> rename</li>
+          <li><span class="line trigger"></span> trigger (event → tag)</li>
+          <li><span class="line customjs"></span> custom JS</li>
+          <li><span class="line table"></span> lookup table</li>
+          <li><span class="line uses"></span> uses settings var</li>
+          <li><span class="line direct"></span> direct / pass-through</li>
+        </ul>
+      </div>
+      <div id="ignored" class="ignored"></div>
+    </aside>
+  </main>
+
+  <div class="drophint">Drop a GTM container .json anywhere</div>
+
+  <div id="privacyOverlay" class="modal-overlay" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="privacyTitle">
+      <button id="privacyClose" class="modal-close" aria-label="Close">&times;</button>
+      <h2 id="privacyTitle">Privacy Policy</h2>
+      <p><strong>GTM Detective runs entirely in your browser. Your container data
+      never leaves your device.</strong></p>
+      <ul>
+        <li><b>No upload.</b> When you open or drag in a GTM container JSON, it is
+        read and analysed locally by JavaScript in this page. It is never sent to
+        any server, and there is no backend to receive it.</li>
+        <li><b>No storage.</b> The container is held only in memory for the current
+        session. Nothing is written to disk, cookies, or local storage. Closing or
+        reloading the tab discards it.</li>
+        <li><b>No tracking.</b> This app sets no analytics, cookies, or trackers,
+        and collects no personal data about you.</li>
+        <li><b>Third-party assets.</b> The graph library (Cytoscape.js and its
+        dagre layout) is loaded from public CDNs (cloudflare, jsdelivr) the first
+        time you open the app. Those requests are standard file downloads and
+        carry none of your container data. To run fully offline, host these
+        libraries locally instead.</li>
+        <li><b>Exports.</b> PNG exports are generated in your browser and saved
+        directly to your device — they are not transmitted anywhere.</li>
+      </ul>
+      <p class="muted">Because everything is local, you can safely analyse
+      production containers that contain proprietary tracking logic.</p>
+    </div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.30.2/cytoscape.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dagre/0.8.5/dagre.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js"></script>
+  <script src="data/sample-container.js"></script>
+  <script src="js/parser.js"></script>
+  <script src="js/graph.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
