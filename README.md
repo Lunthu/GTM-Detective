@@ -40,6 +40,16 @@ can see it work immediately. Then:
 
 > Loading from `file://` works out of the box. If your browser blocks anything,
 > serve the folder: `python -m http.server` then open `http://localhost:8000`.
+> (`python serve.py 4199` is the same but with no-cache headers, handy while
+> editing the app so reloads always pick up changes.)
+
+### Layout
+
+The overview is a **radial "circle of tags"**: tags sit on a ring, each tag's own
+dataLayer sources and GA outputs fan outward around it, and fields shared across
+many tags gravitate to the centre (so they read as spokes, not a tangle of chords
+across the graph). Node/edge labels are hidden when zoomed out and reappear as you
+zoom in or click a node to focus its chain.
 
 ### Getting a container export from GTM
 

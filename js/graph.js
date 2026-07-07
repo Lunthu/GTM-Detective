@@ -275,15 +275,6 @@
       return pos;
     }
 
-    // Assign every non-tag node to a "home" tag (1 or 2 hops away).
-    var buckets = {}, orphans = [];
-    tags.forEach(function (t) { buckets[t.id()] = []; });
-    cy.nodes().forEach(function (node) {
-      if (node.data('role') === 'tag') return;
-      var hub = findHubTag(node);
-      if (hub) buckets[hub.id()].push(node); else orphans.push(node);
-    });
-
     var slice = 2 * Math.PI / n;
     var R = Math.max(340, n * 230 / (2 * Math.PI));
     var angleOf = {};
@@ -293,15 +284,47 @@
       pos[t.id()] = { x: R * Math.cos(a), y: R * Math.sin(a) };
     });
 
-    // Fan each tag's satellites outward within its angular slice.
+    // Classify every non-tag node by how many tags it connects to:
+    //   1 tag   -> exclusive satellite: fans neatly around that tag
+    //   2+ tags -> shared: positioned by the centroid of its tags, so locally
+    //              shared nodes sit between their (nearby) tags with short edges,
+    //              while globally shared nodes gravitate to a compact centre ring
+    //   0 tags  -> orphan (e.g. unused settings-variable cluster)
+    var buckets = {}, shared = [], orphans = [];
+    tags.forEach(function (t) { buckets[t.id()] = []; });
+    cy.nodes().forEach(function (node) {
+      if (node.data('role') === 'tag') return;
+      var ct = connectedTags(node);
+      if (ct.length === 0) orphans.push(node);
+      else if (ct.length === 1) buckets[ct[0]].push(node);
+      else { node.scratch('_ct', ct); shared.push(node); }
+    });
+
+    // exclusive satellites fan outward within each tag's angular slice
     tags.forEach(function (t) {
       placeFan(orderSatellites(buckets[t.id()]), angleOf[t.id()], slice, R, pos);
     });
 
-    // Nodes with no tag (e.g. an unused settings-variable cluster) go on a
-    // small inner circle so they don't collide with the main ring.
+    // shared nodes: centroid of their tags' unit vectors. |mean| (rho) is ~1
+    // when the tags are clustered together, ~0 when spread around the ring.
+    var globals = [];
+    shared.forEach(function (node) {
+      var ct = node.scratch('_ct'), sx = 0, sy = 0;
+      ct.forEach(function (id) { var a = angleOf[id]; sx += Math.cos(a); sy += Math.sin(a); });
+      sx /= ct.length; sy /= ct.length;
+      var rho = Math.hypot(sx, sy);
+      if (rho < 0.25) { globals.push(node); return; }               // widely shared
+      var ang = Math.atan2(sy, sx), radius = R * Math.min(0.82, rho * 0.85);
+      pos[node.id()] = { x: radius * Math.cos(ang), y: radius * Math.sin(ang) };
+    });
+    // widely-shared nodes on a compact inner ring -> edges read as spokes
+    globals.forEach(function (node, i) {
+      var a = 2 * Math.PI * i / globals.length, radius = R * 0.28;
+      pos[node.id()] = { x: radius * Math.cos(a), y: radius * Math.sin(a) };
+    });
+
     if (orphans.length) {
-      var ri = R * 0.4;
+      var ri = R * 0.14;
       orphans.forEach(function (node, i) {
         var a = 2 * Math.PI * i / orphans.length;
         pos[node.id()] = { x: ri * Math.cos(a), y: ri * Math.sin(a) };
@@ -309,11 +332,19 @@
     }
     return pos;
 
-    function findHubTag(node) {
-      var direct = node.neighborhood().nodes('[role="tag"]');
-      if (direct.length) return direct[0];
-      var two = node.neighborhood().nodes().neighborhood().nodes('[role="tag"]');
-      return two.length ? two[0] : null;
+    // Tags this node feeds into / comes from: direct tag neighbours, plus tags
+    // reached through an adjacent transform or settings variable (not through
+    // another tag, which would over-count).
+    function connectedTags(node) {
+      var set = {};
+      node.neighborhood().nodes().forEach(function (nb) {
+        var r = nb.data('role');
+        if (r === 'tag') set[nb.id()] = true;
+        else if (r === 'transform' || r === 'settingsvar') {
+          nb.neighborhood().nodes('[role="tag"]').forEach(function (t) { set[t.id()] = true; });
+        }
+      });
+      return Object.keys(set);
     }
   }
 
@@ -359,6 +390,9 @@
       'text-halign': 'center',
       'text-wrap': 'wrap',
       'text-max-width': 130,
+      // Hide labels when zoomed out (overview) — they'd be an unreadable,
+      // expensive smear on big containers. They reappear on zoom-in / focus.
+      'min-zoomed-font-size': 8,
       'width': 'label', 'height': 'label',
       'padding': 10,
       'shape': 'round-rectangle',
@@ -367,7 +401,7 @@
       'background-color': '#ffffff'
     }},
     { selector: 'node[role="dlevent"]', style: { 'background-color': '#e6f4ea', 'border-color': '#2f9e44', 'shape': 'round-tag' }},
-    { selector: 'node[role="dlfield"]', style: { 'background-color': '#dff3f0', 'border-color': '#099268' }},
+    { selector: 'node[role="dlfield"]', style: { 'background-color': '#e7f5ff', 'border-color': '#1c7ed6' }},
     { selector: 'node[role="tag"]', style: { 'background-color': '#e7ecfd', 'border-color': '#3b5bdb', 'border-width': 2, 'font-weight': 'bold' }},
     { selector: 'node[role="gaevent"]', style: { 'background-color': '#fff1de', 'border-color': '#f08c00', 'shape': 'round-tag' }},
     { selector: 'node[role="gafield"]', style: { 'background-color': '#fbf2da', 'border-color': '#c9820a' }},
@@ -375,7 +409,7 @@
     { selector: 'node[role="settingsvar"]', style: { 'background-color': '#e0f7fa', 'border-color': '#0891b2', 'border-width': 2, 'shape': 'hexagon', 'font-weight': 'bold' }},
     { selector: 'node[role="transform"]', style: { 'background-color': '#f0e9fb', 'border-color': '#7048e8', 'shape': 'diamond', 'text-max-width': 110 }},
     { selector: 'node[role="constant"]', style: { 'background-color': '#eef1f4', 'border-color': '#868e96', 'shape': 'ellipse' }},
-    { selector: 'node[role="builtin"]', style: { 'background-color': '#eef1f4', 'border-color': '#868e96' }},
+    { selector: 'node[role="builtin"]', style: { 'background-color': '#f2ece0', 'border-color': '#8a6d3b' }},
 
     { selector: 'edge', style: {
       'width': 1.5,
@@ -383,9 +417,12 @@
       'target-arrow-color': '#adb5bd',
       'target-arrow-shape': 'triangle',
       'curve-style': 'bezier',
+      'opacity': 0.5,
       'font-size': 9,
       'color': '#57606a',
       'label': 'data(label)',
+      // Same as nodes: edge labels only paint once zoomed in enough to read.
+      'min-zoomed-font-size': 8,
       'text-background-color': '#ffffff',
       'text-background-opacity': 0.9,
       'text-background-padding': 2
@@ -445,20 +482,32 @@
   };
 
   // Resolve a clicked node to the precise set of related elements: the union of
-  // every relation group it participates in, plus the edges that run entirely
-  // within that node set. Falls back to immediate neighbours if the node is in
-  // no group.
+  // every relation group it participates in. Falls back to immediate neighbours
+  // if the node is in no group.
   GTMGraph.prototype._relatedElements = function (node) {
     var groups = this._nodeToGroups[node.id()];
-    var ids = {};
-    if (groups && groups.length) {
-      groups.forEach(function (g) { Object.keys(g).forEach(function (nid) { ids[nid] = true; }); });
-    } else {
-      node.closedNeighborhood().nodes().forEach(function (n) { ids[n.id()] = true; });
+    var cy = this.cy;
+    if (!groups || !groups.length) {
+      var nb = node.closedNeighborhood();
+      return { nodes: nb.nodes(), all: nb };
     }
-    var nodes = this.cy.nodes().filter(function (n) { return ids[n.id()]; });
-    var edges = this.cy.edges().filter(function (e) {
-      return ids[e.source().id()] && ids[e.target().id()];
+    // Nodes: union of every group's node set.
+    var ids = {};
+    groups.forEach(function (g) { Object.keys(g).forEach(function (nid) { ids[nid] = true; }); });
+    var nodes = cy.nodes().filter(function (n) { return ids[n.id()]; });
+    // Edges: only those whose BOTH endpoints sit inside a *single* group. Testing
+    // against the merged node set instead would wrongly light edges belonging to
+    // a relationship the clicked node isn't part of — e.g. a dataLayer field ->
+    // settings-variable edge appearing when you click a tag that merely *uses*
+    // that settings variable (its field and the settings var land in the union
+    // via two different groups, but no single group ties them together).
+    var edges = cy.edges().filter(function (e) {
+      var s = e.source().id(), t = e.target().id();
+      if (!ids[s] || !ids[t]) return false;
+      for (var i = 0; i < groups.length; i++) {
+        if (groups[i][s] && groups[i][t]) return true;
+      }
+      return false;
     });
     return { nodes: nodes, all: nodes.union(edges) };
   };
