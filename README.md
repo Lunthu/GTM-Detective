@@ -142,3 +142,7 @@ node -e 'global.window=global;require("./data/sample-container.js");require("./j
   *variables* feeding GA fields are traced).
 - Library assets (Cytoscape/dagre) load from CDN, so the very first load needs
   internet; the container data itself is always processed locally.
+
+## Author
+
+Built by **Victor Laputsky** — [valnoros@gmail.com](mailto:valnoros@gmail.com) · [LinkedIn](https://www.linkedin.com/in/victor-laputsky-44199bab/)
