@@ -119,19 +119,21 @@ window.SAMPLE_CONTAINER = {
       },
       {
         "tagId": "5",
-        "name": "Meta Pixel - PageView",
+        "name": "Meta Pixel - Purchase",
         "type": "html",
         "parameter": [
-          { "type": "TEMPLATE", "key": "html", "value": "<script>/* fbq pageview */</script>" }
+          { "type": "TEMPLATE", "key": "html", "value": "<script>fbq('track','Purchase',{value:{{DLV - product_price}},currency:{{DLV - currency_code}},content_category:{{Lookup - category map}},color_code:{{DLV - color_name}}});</script>" }
         ],
-        "firingTriggerId": ["2147479553"]
+        "firingTriggerId": ["104"]
       },
       {
         "tagId": "6",
         "name": "Google Ads - Purchase Conversion",
         "type": "awct",
         "parameter": [
-          { "type": "TEMPLATE", "key": "conversionId", "value": "AW-000000000" }
+          { "type": "TEMPLATE", "key": "conversionId", "value": "AW-000000000" },
+          { "type": "TEMPLATE", "key": "conversionValue", "value": "{{DLV - product_price}}" },
+          { "type": "TEMPLATE", "key": "currencyCode", "value": "{{DLV - currency_code}}" }
         ],
         "firingTriggerId": ["104"]
       }

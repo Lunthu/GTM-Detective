@@ -56,15 +56,29 @@ zoom in or click a node to focus its chain.
 GTM → **Admin** → **Export Container** → pick the workspace/version → downloads a
 `.json`. That is the file this tool reads.
 
-## What it reads (and ignores)
+## What it reads
 
-| Tag type | Handled as |
-|---|---|
-| `gaawe` | **GA4 Event** — event name, event parameters, user properties |
-| `googtag`, `gaawc` | **Google tag / GA4 config** — configuration parameters + user properties (no event name of its own) |
-| everything else (`html`, `img`, `awct`, `sp`, `flc`, …) | **Ignored** (listed in the panel so you can confirm) |
+Tags are grouped into three categories, each toggled independently with the
+**Show tags** checkboxes (only the GA category is on by default, to keep large
+containers fast):
 
-Per tag, these mapping tables are parsed:
+| Category | Tag types | Shown as |
+|---|---|---|
+| **GA4 + Google tag** | `gaawe`, `googtag`, `gaawc` | Full transformation semantics — event-name renames, event/config parameters, user properties, event-settings variables |
+| **Other tags** | `awct`, `sp`, `flc`, `img`, templates (`cvt_*`), … | Field mappings inferred from parameter keys + key/value tables, plus event name + triggers |
+| **Custom HTML** | `html` | Field mappings + event name inferred from the code (`fbq('track', …)`, `field: {{var}}`), plus triggers |
+
+Non-GA tags get the same `dataLayer field → tag → output field` chains (with
+rename detection) as GA tags — e.g. dataLayer `color` → Meta Pixel `color_code`.
+Where a system has an **event name** (Meta/TikTok event, Contentsquare virtual
+pageview, …) it's detected too — from a `fbq('track','Purchase')`-style call in
+Custom HTML, or an event-name parameter key — and shown as a tag event node
+(systems without one, like Google Ads / Floodlight, simply don't get it).
+Output field names come from the tag's parameter keys, its key/value tables, or,
+for Custom HTML, `name: {{variable}}` / `name={{variable}}` patterns in the code.
+Any referenced variable not tied to a named field is shown as a plain input.
+
+For GA tags, these mapping tables are parsed:
 
 - **Event parameters** (`eventSettingsTable`) — inline on the tag.
 - **Configuration parameters** (`configSettingsTable`) on Google tags.
@@ -88,12 +102,14 @@ Variables followed when resolving a value:
 
 ## Visual encoding
 
-- **Node roles**: dataLayer event, dataLayer field, GA4 tag (hub), GA4 event,
-  GA4 field, GA4 user property, transform (diamond), constant, built-in/other.
+- **Node roles**: dataLayer event, dataLayer field, GA4 tag (blue), other tag
+  (slate), custom HTML tag (red), GA4 event, GA4 field, GA4 user property,
+  transform (diamond), constant, built-in/other.
 - **Edges**: orange = a rename (name changes), purple dashed = custom JS,
   green dashed = lookup table, blue = trigger, grey = direct / pass-through.
-- Toggle **Event names / Event fields / User properties** to focus a flow;
-  config-scope parameters are marked `cfg` in the detail panel.
+- **Show tags** toggles the three tag categories; within GA, **GA detail**
+  (Events / Fields / User props / Settings) focuses a flow. Config-scope
+  parameters are marked `cfg` in the detail panel.
 
 ## Privacy
 
@@ -132,14 +148,13 @@ node -e 'global.window=global;require("./data/sample-container.js");require("./j
 
 ## Known limitations / next steps
 
-- GA4 only (UA `ua` tags are labeled and ignored). The parser is structured so
-  UA support can be added later.
-- Custom JS field tracing is based on the `{{variable}}` references inside the
-  code, not full JS data-flow analysis — a script that reads
-  `dataLayer`/`google_tag_manager` directly (without a `{{DLV}}`) won't have that
-  dependency detected. Such cases are still shown as a custom-JS transform node.
-- Custom HTML **tags** that push to the dataLayer are ignored (only Custom JS
-  *variables* feeding GA fields are traced).
+- Variable tracing is based on the `{{variable}}` references present in a tag's
+  parameters or a Custom JavaScript variable's code — not full JS data-flow
+  analysis. A script that reads `dataLayer`/`google_tag_manager` directly
+  (without a `{{DLV}}`) won't have that dependency detected, though the tag/custom-JS
+  node itself is still shown.
+- Non-GA tags are shown by their dataLayer *inputs* (triggers + referenced
+  variables); their vendor-specific output semantics aren't modelled.
 - Library assets (Cytoscape/dagre) load from CDN, so the very first load needs
   internet; the container data itself is always processed locally.
 

@@ -15,8 +15,9 @@
     graph = new GTMGraph($('cy'));
     graph.onSelect = renderDetail;
 
-    // View toggles
-    ['toggleEvents', 'toggleFields', 'toggleUserProps', 'toggleSettingsVars'].forEach(function (id) {
+    // View toggles: tag-category masters + GA sub-flow filters.
+    ['catGa', 'catOther', 'catHtml',
+     'toggleEvents', 'toggleFields', 'toggleUserProps', 'toggleSettingsVars'].forEach(function (id) {
       $(id).addEventListener('change', rerender);
     });
     $('search').addEventListener('input', function (e) {
@@ -84,7 +85,6 @@
     }
     $('sourceName').textContent = sourceName;
     updateStats(currentModel);
-    renderIgnored(currentModel);
     rerender();
     renderDetail(null);
   }
@@ -92,13 +92,16 @@
   function rerender() {
     if (!currentModel) return;
     var count = graph.render(currentModel, {
+      showGa: $('catGa').checked,
+      showOther: $('catOther').checked,
+      showHtml: $('catHtml').checked,
       showEvents: $('toggleEvents').checked,
       showFields: $('toggleFields').checked,
       showUserProps: $('toggleUserProps').checked,
       showSettingsVars: $('toggleSettingsVars').checked
     });
     $('renamesOnly').checked = false;
-    if (count === 0) $('detail').innerHTML = '<p class="muted">No GA4 transformations found in this container.</p>';
+    if (count === 0) $('detail').innerHTML = '<p class="muted">Nothing to show — enable a tag category above.</p>';
   }
 
   function updateStats(m) {
@@ -106,25 +109,17 @@
     $('stats').innerHTML = '' +
       stat(s.gaTagCount, 'GA4 tags') +
       stat(s.googleTagCount, 'Google tags') +
+      stat(s.otherTagCount, 'other tags', 'other') +
+      stat(s.htmlTagCount, 'custom HTML', 'html') +
       stat(s.eventRenameCount, 'event renames', 'rename') +
       stat(s.fieldRenameCount, 'field renames', 'rename') +
       stat(s.userPropCount, 'user properties', 'userprop') +
       stat(s.customJsCount, 'custom JS', 'js') +
-      stat(s.tableCount, 'lookup tables', 'table') +
-      stat(s.ignoredTagCount, 'ignored tags', 'muted');
+      stat(s.tableCount, 'lookup tables', 'table');
   }
   function stat(n, label, cls) {
     return '<div class="stat ' + (cls || '') + '"><span class="num">' + n + '</span>' +
       '<span class="lbl">' + label + '</span></div>';
-  }
-
-  function renderIgnored(m) {
-    if (!m.ignoredTags.length) { $('ignored').innerHTML = ''; return; }
-    var rows = m.ignoredTags.map(function (t) {
-      return '<li><span class="tag-type">' + esc(t.typeLabel) + '</span> ' + esc(t.name) + '</li>';
-    }).join('');
-    $('ignored').innerHTML = '<details><summary>' + m.ignoredTags.length +
-      ' non-GA tags ignored</summary><ul>' + rows + '</ul></details>';
   }
 
   function renderDetail(data) {
@@ -197,6 +192,39 @@
         html += '<div class="kv"><b>Used by ' + usedBy.length + ':</b> ' +
           usedBy.map(function (u) { return esc(u.ownerName); }).join(', ') + '</div>';
       }
+    } else if (data.role === 'othertag' || data.role === 'htmltag') {
+      var ot = (currentModel.otherTags || []).filter(function (t) { return t.tagId === data.tagId; })[0];
+      if (ot) {
+        html += '<div class="kv"><b>Type:</b> ' + esc(ot.typeLabel) + '</div>';
+        if (ot.dlEvents.length) {
+          html += '<div class="kv"><b>Fires on:</b> ' +
+            ot.dlEvents.map(function (d) { return esc(d.eventName); }).join(', ') + '</div>';
+        }
+        if (ot.eventName) {
+          html += '<div class="kv"><b>Event name:</b> ' + esc(ot.eventName.name) +
+            (ot.eventName.isRename ? ' <span class="pill rename">renamed</span>' : '') + '</div>';
+        }
+        if (ot.fields.length) {
+          html += '<h4>Field mappings</h4><table class="map"><tr><th>tag field</th><th>from</th></tr>';
+          ot.fields.forEach(function (f) {
+            html += '<tr><td>' + esc(f.field) + (f.isRename ? ' <span class="pill rename">R</span>' : '') +
+              '</td><td class="mono">' + esc(f.valueRaw) + '</td></tr>';
+          });
+          html += '</table>';
+        }
+        if (ot.extraSources.length) {
+          html += '<h4>Other dataLayer inputs</h4><table class="map"><tr><th>via variable</th><th>dataLayer</th></tr>';
+          ot.extraSources.forEach(function (s) {
+            var dl = (s.dlFields && s.dlFields.length) ? s.dlFields.join(', ')
+              : (s.kind === 'builtin' || s.kind === 'other-var' ? '(built-in)' : '—');
+            html += '<tr><td>' + esc(s.name) + '</td><td class="mono">' + esc(dl) + '</td></tr>';
+          });
+          html += '</table>';
+        }
+        if (!ot.fields.length && !ot.extraSources.length) {
+          html += '<p class="muted">References no dataLayer variables.</p>';
+        }
+      }
     } else if (data.role === 'transform') {
       html += '<p class="muted">' + (data.transformKind === 'customjs' ? 'Custom JavaScript variable' :
         data.transformKind === 'lookup-table' ? 'Lookup Table variable' : 'RegEx Table variable') + '</p>';
@@ -222,7 +250,8 @@
   function roleLabel(role) {
     return {
       dlevent: 'dataLayer event', dlfield: 'dataLayer field', tag: 'GA4 tag',
-      gaevent: 'GA4 event', gafield: 'GA4 field', transform: 'Transform',
+      othertag: 'Other tag', htmltag: 'Custom HTML tag',
+      gaevent: 'GA4 event', gafield: 'GA4 field', tagevent: 'Tag event name', tagfield: 'Tag output field', transform: 'Transform',
       constant: 'Constant', builtin: 'Built-in / other variable',
       userprop: 'GA4 user property', settingsvar: 'Event Settings variable'
     }[role] || role;

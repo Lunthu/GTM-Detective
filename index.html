@@ -31,10 +31,19 @@
   <div class="toolbar">
     <input id="search" class="search" type="text" placeholder="Search event / field / tag name…" />
     <span id="searchCount" class="muted small"></span>
-    <label class="chk"><input id="toggleEvents" type="checkbox" checked /> Event names</label>
-    <label class="chk"><input id="toggleFields" type="checkbox" checked /> Event fields</label>
-    <label class="chk"><input id="toggleUserProps" type="checkbox" checked /> User properties</label>
-    <label class="chk"><input id="toggleSettingsVars" type="checkbox" checked /> Event settings</label>
+    <span class="tgroup">
+      <span class="tglabel">Show tags:</span>
+      <label class="chk"><input id="catGa" type="checkbox" checked /> GA4 + Google tag</label>
+      <label class="chk"><input id="catOther" type="checkbox" /> Other tags</label>
+      <label class="chk"><input id="catHtml" type="checkbox" /> Custom HTML</label>
+    </span>
+    <span class="tgroup">
+      <span class="tglabel">GA detail:</span>
+      <label class="chk"><input id="toggleEvents" type="checkbox" checked /> Events</label>
+      <label class="chk"><input id="toggleFields" type="checkbox" checked /> Fields</label>
+      <label class="chk"><input id="toggleUserProps" type="checkbox" checked /> User props</label>
+      <label class="chk"><input id="toggleSettingsVars" type="checkbox" checked /> Settings</label>
+    </span>
     <label class="chk"><input id="renamesOnly" type="checkbox" /> Renames only</label>
     <span class="source">Source: <b id="sourceName">—</b></span>
   </div>
@@ -49,8 +58,12 @@
           <li><span class="sw ev"></span> dataLayer event</li>
           <li><span class="sw fl"></span> dataLayer field</li>
           <li><span class="sw tag"></span> GA4 tag</li>
+          <li><span class="sw othertag"></span> other tag</li>
+          <li><span class="sw htmltag"></span> custom HTML tag</li>
           <li><span class="sw gaev"></span> GA4 event</li>
           <li><span class="sw gafl"></span> GA4 field</li>
+          <li><span class="sw tagev"></span> tag event name</li>
+          <li><span class="sw tagfl"></span> tag output field</li>
           <li><span class="sw tr"></span> transform (JS / table)</li>
           <li><span class="sw const"></span> constant value</li>
           <li><span class="sw builtin"></span> built-in / other var</li>
@@ -66,7 +79,6 @@
           <li><span class="line direct"></span> direct / pass-through</li>
         </ul>
       </div>
-      <div id="ignored" class="ignored"></div>
       <div class="credits">
         <span>Questions & suggestions:</span>
         <span class="credit-links">

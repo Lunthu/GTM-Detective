@@ -19,6 +19,11 @@
 
   function buildElements(model, opts) {
     opts = opts || {};
+    // Category masters: which tag categories to render at all.
+    var showGa = opts.showGa !== false;       // GA4 event tags + Google tag
+    var showOther = !!opts.showOther;          // other/template tags
+    var showHtml = !!opts.showHtml;            // custom HTML tags
+    // GA sub-flow filters (only meaningful when showGa is on).
     var showEvents = opts.showEvents !== false;
     var showFields = opts.showFields !== false;
     var showUserProps = opts.showUserProps !== false;
@@ -40,7 +45,7 @@
     }
 
     // ----- event-name flow -----
-    if (showEvents) {
+    if (showGa && showEvents) {
       model.events.forEach(function (ev) {
         var tagId = addNode('tag:' + ev.tagId, {
           role: 'tag', label: ev.tagName, tagId: ev.tagId
@@ -69,7 +74,7 @@
     }
 
     // ----- field flow -----
-    if (showFields) {
+    if (showGa && showFields) {
       model.fields.forEach(function (f) {
         var tagId = addNode('tag:' + f.tagId, {
           role: 'tag', label: f.tagName, tagId: f.tagId
@@ -91,7 +96,7 @@
     }
 
     // ----- user-property flow -----
-    if (showUserProps) {
+    if (showGa && showUserProps) {
       model.userProps.forEach(function (u) {
         var tagId = addNode('tag:' + u.tagId, {
           role: 'tag', label: u.tagName, tagId: u.tagId
@@ -111,7 +116,7 @@
     }
 
     // ----- event settings variable flow -----
-    if (showSettingsVars) {
+    if (showGa && showSettingsVars) {
       // (a) Standalone cluster, drawn once per settings variable:
       //     source(s) -> [transform] -> Settings variable -> GA4 field / user prop
       (model.settingsVars || []).forEach(function (sv) {
@@ -136,6 +141,48 @@
           ? addNode('tag:' + use.ownerId, { role: 'tag', label: use.ownerName, tagId: use.ownerId })
           : addNode('settingsvar:' + use.ownerId, { role: 'settingsvar', label: use.ownerId });
         addEdge(ownerId, svId, { label: 'uses', klass: 'uses', kind: 'settings' });
+      });
+    }
+
+    // ----- non-GA tag flow (custom HTML / other) -----
+    // Named field mappings mirror GA (source -> tag -> output field), so renames
+    // like dataLayer "color" -> pixel "color_code" show the same way. Plus each
+    // tag's triggers and any un-named dataLayer inputs.
+    if (showOther || showHtml) {
+      (model.otherTags || []).forEach(function (t) {
+        if (t.category === 'html' ? !showHtml : !showOther) return;
+        var role = t.category === 'html' ? 'htmltag' : 'othertag';
+        var tagId = addNode('otag:' + t.tagId, {
+          role: role, label: t.tagName, tagId: t.tagId, otherType: t.typeLabel
+        });
+        t.dlEvents.forEach(function (dl) {
+          var dlId = addNode('dlevent:' + dl.eventName, { role: 'dlevent', label: dl.eventName });
+          addEdge(dlId, tagId, {
+            label: dl.triggerName,
+            klass: dl.kind === 'builtin' ? 'builtin' : 'trigger',
+            kind: 'event'
+          });
+        });
+        // event name the tag reports (where the system has one)
+        if (t.eventName) {
+          var evId = addNode('tagevent:' + t.tagId + ':' + t.eventName.name, {
+            role: 'tagevent', label: t.eventName.name
+          });
+          addEdge(tagId, evId, {
+            label: 'event', klass: t.eventName.isRename ? 'rename' : 'passthrough', kind: 'event'
+          });
+          t.eventName.sources.forEach(function (src) { wireSource(src, tagId, '_event'); });
+        }
+        t.fields.forEach(function (f) {
+          var ofId = addNode('tagfield:' + t.tagId + ':' + f.field, {
+            role: 'tagfield', label: f.field
+          });
+          addEdge(tagId, ofId, {
+            label: 'sets', klass: f.isRename ? 'rename' : 'passthrough', kind: 'field'
+          });
+          f.sources.forEach(function (src) { wireSource(src, tagId, f.field); });
+        });
+        t.extraSources.forEach(function (src) { wireSource(src, tagId, t.tagId); });
       });
     }
 
@@ -234,6 +281,33 @@
       g[(use.ownerType === 'tag' ? 'tag:' : 'settingsvar:') + use.ownerId] = true;
       groups.push(g);
     });
+    // non-GA tags: one group per trigger (dataLayer event), one per named field
+    // mapping (source -> tag -> output field), one per un-named input.
+    (model.otherTags || []).forEach(function (t) {
+      var tagNodeId = 'otag:' + t.tagId;
+      t.dlEvents.forEach(function (d) {
+        var g = {}; g[tagNodeId] = true; g['dlevent:' + d.eventName] = true;
+        groups.push(g);
+      });
+      if (t.eventName) {
+        var g = {};
+        g[tagNodeId] = true;
+        g['tagevent:' + t.tagId + ':' + t.eventName.name] = true;
+        t.dlEvents.forEach(function (d) { g['dlevent:' + d.eventName] = true; });
+        addSourceIds(g, t.eventName.sources, tagNodeId, '_event');
+        groups.push(g);
+      }
+      t.fields.forEach(function (f) {
+        var g = {}; g[tagNodeId] = true; g['tagfield:' + t.tagId + ':' + f.field] = true;
+        addSourceIds(g, f.sources, tagNodeId, f.field);
+        groups.push(g);
+      });
+      t.extraSources.forEach(function (src) {
+        var g = {}; g[tagNodeId] = true;
+        addSourceIds(g, [src], tagNodeId, t.tagId);
+        groups.push(g);
+      });
+    });
     return groups;
   }
 
@@ -255,13 +329,17 @@
     });
   }
 
+  // Any tag (GA, other, or custom HTML) acts as a hub on the radial layout.
+  var HUB_SELECTOR = 'node[role="tag"], node[role="othertag"], node[role="htmltag"]';
+  function isHubRole(r) { return r === 'tag' || r === 'othertag' || r === 'htmltag'; }
+
   // ---- radial "circle of tags" layout ------------------------------------
   // Tags are placed on a circle; every other node fans outward around the tag
   // it belongs to. Computed positions are applied via the O(n) `preset` layout
   // (no expensive iterative layout — fast and predictable on big containers).
   function radialPositions(cy) {
     var pos = {};
-    var tags = cy.nodes('[role="tag"]').sort(function (a, b) {
+    var tags = cy.nodes(HUB_SELECTOR).sort(function (a, b) {
       return a.id() < b.id() ? -1 : 1;
     });
     var n = tags.length;
@@ -293,7 +371,7 @@
     var buckets = {}, shared = [], orphans = [];
     tags.forEach(function (t) { buckets[t.id()] = []; });
     cy.nodes().forEach(function (node) {
-      if (node.data('role') === 'tag') return;
+      if (isHubRole(node.data('role'))) return;
       var ct = connectedTags(node);
       if (ct.length === 0) orphans.push(node);
       else if (ct.length === 1) buckets[ct[0]].push(node);
@@ -339,9 +417,9 @@
       var set = {};
       node.neighborhood().nodes().forEach(function (nb) {
         var r = nb.data('role');
-        if (r === 'tag') set[nb.id()] = true;
+        if (isHubRole(r)) set[nb.id()] = true;
         else if (r === 'transform' || r === 'settingsvar') {
-          nb.neighborhood().nodes('[role="tag"]').forEach(function (t) { set[t.id()] = true; });
+          nb.neighborhood().nodes(HUB_SELECTOR).forEach(function (t) { set[t.id()] = true; });
         }
       });
       return Object.keys(set);
@@ -353,7 +431,7 @@
   function orderSatellites(list) {
     var rank = {
       dlevent: 0, dlfield: 1, transform: 2, constant: 2, builtin: 2,
-      settingsvar: 3, gaevent: 6, gafield: 7, userprop: 8
+      settingsvar: 3, gaevent: 6, tagevent: 6, gafield: 7, tagfield: 7, userprop: 8
     };
     return list.slice().sort(function (a, b) {
       return (rank[a.data('role')] || 5) - (rank[b.data('role')] || 5);
@@ -403,8 +481,12 @@
     { selector: 'node[role="dlevent"]', style: { 'background-color': '#e6f4ea', 'border-color': '#2f9e44', 'shape': 'round-tag' }},
     { selector: 'node[role="dlfield"]', style: { 'background-color': '#e7f5ff', 'border-color': '#1c7ed6' }},
     { selector: 'node[role="tag"]', style: { 'background-color': '#e7ecfd', 'border-color': '#3b5bdb', 'border-width': 2, 'font-weight': 'bold' }},
+    { selector: 'node[role="othertag"]', style: { 'background-color': '#eceef1', 'border-color': '#5f6b7a', 'border-width': 2, 'font-weight': 'bold' }},
+    { selector: 'node[role="htmltag"]', style: { 'background-color': '#fff0f0', 'border-color': '#e03131', 'border-width': 2, 'font-weight': 'bold' }},
     { selector: 'node[role="gaevent"]', style: { 'background-color': '#fff1de', 'border-color': '#f08c00', 'shape': 'round-tag' }},
+    { selector: 'node[role="tagevent"]', style: { 'background-color': '#fff0e6', 'border-color': '#f76707', 'shape': 'round-tag' }},
     { selector: 'node[role="gafield"]', style: { 'background-color': '#fbf2da', 'border-color': '#c9820a' }},
+    { selector: 'node[role="tagfield"]', style: { 'background-color': '#e6fcf5', 'border-color': '#0ca678' }},
     { selector: 'node[role="userprop"]', style: { 'background-color': '#fde8ef', 'border-color': '#d6336c', 'shape': 'round-tag' }},
     { selector: 'node[role="settingsvar"]', style: { 'background-color': '#e0f7fa', 'border-color': '#0891b2', 'border-width': 2, 'shape': 'hexagon', 'font-weight': 'bold' }},
     { selector: 'node[role="transform"]', style: { 'background-color': '#f0e9fb', 'border-color': '#7048e8', 'shape': 'diamond', 'text-max-width': 110 }},
@@ -495,15 +577,19 @@
     var ids = {};
     groups.forEach(function (g) { Object.keys(g).forEach(function (nid) { ids[nid] = true; }); });
     var nodes = cy.nodes().filter(function (n) { return ids[n.id()]; });
-    // Edges: only those whose BOTH endpoints sit inside a *single* group. Testing
-    // against the merged node set instead would wrongly light edges belonging to
-    // a relationship the clicked node isn't part of — e.g. a dataLayer field ->
-    // settings-variable edge appearing when you click a tag that merely *uses*
-    // that settings variable (its field and the settings var land in the union
-    // via two different groups, but no single group ties them together).
+    // Edges between two highlighted nodes are shown, EXCEPT settings-variable
+    // boundary edges (anything touching a settingsvar, plus the "uses" link),
+    // which stay a deliberate black box: those are shown only when a *single*
+    // group of the clicked node ties both ends together. Without that carve-out,
+    // clicking a tag would light a dataLayer field -> settings-variable edge just
+    // because that field also feeds the tag; with it applied to *all* edges,
+    // legitimate tag-field edges between co-highlighted nodes would wrongly dim.
     var edges = cy.edges().filter(function (e) {
       var s = e.source().id(), t = e.target().id();
       if (!ids[s] || !ids[t]) return false;
+      var boundary = e.data('klass') === 'uses' ||
+        e.source().data('role') === 'settingsvar' || e.target().data('role') === 'settingsvar';
+      if (!boundary) return true;
       for (var i = 0; i < groups.length; i++) {
         if (groups[i][s] && groups[i][t]) return true;
       }

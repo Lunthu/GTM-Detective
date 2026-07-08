@@ -53,6 +53,8 @@ h1 { font-size: 17px; margin: 0; }
 .stat.js .num { color: var(--js); }
 .stat.table .num { color: var(--table); }
 .stat.userprop .num { color: #d6336c; }
+.stat.other .num { color: #5f6b7a; }
+.stat.html .num { color: #e03131; }
 .stat.muted .num { color: var(--muted); }
 
 .toolbar {
@@ -65,6 +67,8 @@ h1 { font-size: 17px; margin: 0; }
 }
 .search:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(59, 91, 219, 0.15); }
 .chk { display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+.tgroup { display: inline-flex; align-items: center; gap: 12px; padding-left: 14px; border-left: 1px solid var(--border); }
+.tglabel { font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
 .source { margin-left: auto; color: var(--muted); font-size: 12px; }
 .small { font-size: 12px; }
 .muted { color: var(--muted); }
@@ -101,8 +105,12 @@ table.map th { color: var(--muted); font-weight: 600; }
 .sw.ev { background: #e6f4ea; border-color: #2f9e44; }
 .sw.fl { background: #e7f5ff; border-color: #1c7ed6; }
 .sw.tag { background: #e7ecfd; border-color: #3b5bdb; }
+.sw.othertag { background: #eceef1; border-color: #5f6b7a; }
+.sw.htmltag { background: #fff0f0; border-color: #e03131; }
 .sw.gaev { background: #fff1de; border-color: #f08c00; }
 .sw.gafl { background: #fbf2da; border-color: #c9820a; }
+.sw.tagev { background: #fff0e6; border-color: #f76707; }
+.sw.tagfl { background: #e6fcf5; border-color: #0ca678; }
 .sw.tr { background: #f0e9fb; border-color: #7048e8; transform: rotate(45deg); border-radius: 2px; }
 .sw.const { background: #eef1f4; border-color: #868e96; border-radius: 50%; }
 .sw.builtin { background: #f2ece0; border-color: #8a6d3b; }

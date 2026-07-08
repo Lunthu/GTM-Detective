@@ -2,29 +2,35 @@
  * parser.js
  * -----------------------------------------------------------------------------
  * Pure logic: takes a Google Tag Manager container export (JSON) and produces a
- * normalized model describing how dataLayer event names and dataLayer fields are
- * transformed on their way into Google Analytics 4.
+ * normalized model of how dataLayer data flows into the container's tags.
  *
  * No DOM access here on purpose — this file is the analytical core and can be
  * unit-tested or reused in Node. graph.js turns the model into a graph.
  *
- * GA4-only scope: we intentionally follow only GA4 tags and explicitly ignore
- * marketing pixels / other vendor tags. Custom JavaScript and lookup/regex
- * tables are surfaced because they commonly rename or derive GA fields.
+ * Tags are grouped into three categories the UI can show independently:
+ *   'ga'    — GA4 event tags + the Google tag / GA4 config. Full transformation
+ *             semantics: event-name renames, event/config parameters, user
+ *             properties, event-settings variables.
+ *   'html'  — Custom HTML tags. Shown by the dataLayer variables their code
+ *             references and the triggers that fire them.
+ *   'other' — every other tag (marketing pixels, Ads, Floodlight, templates…).
+ *             Shown by the dataLayer variables its parameters reference and its
+ *             triggers.
+ * Custom JavaScript and lookup/regex tables are surfaced as transforms wherever
+ * they sit between the dataLayer and a tag.
  */
 (function (global) {
   'use strict';
 
   // ---- Tag type classification -------------------------------------------
   // GTM tag "type" codes. GA4 event tags carry the event-name + parameter
-  // mappings we care about. Config/Google-tag types are GA but usually emit no
-  // event of their own. Everything else is "other" (marketing pixels, Ads,
-  // custom HTML, etc.) and is ignored from the transformation graph.
+  // mappings; the Google-tag / config types are GA but usually emit no event of
+  // their own; Custom HTML is its own category; everything else is "other".
   var GA4_EVENT_TYPES = ['gaawe'];               // GA4 Event
   var GA4_CONFIG_TYPES = ['googtag', 'gaawc'];   // Google tag / GA4 Configuration
+  var HTML_TYPES = ['html'];                     // Custom HTML
 
-  // Human-readable labels for common non-GA tag types, used in the "ignored"
-  // list so the analyst can confirm nothing GA-relevant was skipped.
+  // Human-readable labels for common tag types, shown in the detail panel.
   var TAG_TYPE_LABELS = {
     html: 'Custom HTML',
     img: 'Custom Image / Pixel',
@@ -33,9 +39,23 @@
     flc: 'Floodlight Counter',
     fls: 'Floodlight Sales',
     gclidw: 'Conversion Linker',
-    ua: 'Universal Analytics (legacy)',
-    cvt_template: 'Custom Template'
+    gaawe: 'GA4 Event',
+    googtag: 'Google Tag',
+    gaawc: 'GA4 Configuration'
   };
+
+  // Category a tag type belongs to: 'ga' | 'html' | 'other'.
+  function tagCategory(type) {
+    if (GA4_EVENT_TYPES.indexOf(type) !== -1 || GA4_CONFIG_TYPES.indexOf(type) !== -1) return 'ga';
+    if (HTML_TYPES.indexOf(type) !== -1) return 'html';
+    return 'other';
+  }
+
+  function typeLabel(type) {
+    if (TAG_TYPE_LABELS[type]) return TAG_TYPE_LABELS[type];
+    if (typeof type === 'string' && type.indexOf('cvt_') === 0) return 'Custom Template';
+    return type;
+  }
 
   // Trigger types that are not CUSTOM_EVENT map to a GTM built-in event name.
   // (These are auto-events GTM pushes to the dataLayer under the hood.)
@@ -55,6 +75,22 @@
   };
 
   var VAR_REF_RE = /\{\{([^}]+)\}\}/g;
+
+  // Heuristic for Custom HTML tags: a field/key assigned a {{variable}}, e.g.
+  //   color_code: {{DLV - color}}     "value":{{DLV - price}}
+  //   ?color_code={{DLV - color}}     fbq('track',{content_ids:{{DLV - ids}}})
+  // Captures the field name (1) and the variable reference (2).
+  var FIELD_IN_CODE_RE = /["']?([A-Za-z_$][\w$-]*)["']?\s*[:=]\s*["']?\{\{([^}]+)\}\}/g;
+
+  // Event name inside common pixel calls in Custom HTML, e.g.
+  //   fbq('track','Purchase')  fbq('trackCustom',{{DLV - ev}})  ttq.track('...')
+  // Captures a literal event name (1) or a {{variable}} reference (2).
+  var HTML_EVENT_RE = /(?:fbq\s*\(\s*['"](?:track|trackCustom)['"]\s*,|ttq\s*\.\s*track\s*\(|snaptr\s*\(\s*['"]track['"]\s*,|pintrk\s*\(\s*['"]track['"]\s*,)\s*(?:['"]([^'"]+)['"]|\{\{([^}]+)\}\})/i;
+
+  // Parameter keys that commonly hold a tag's event / virtual-pageview name
+  // (Meta template, Contentsquare artificial pageview, etc.).
+  var EVENT_NAME_KEYS = ['eventName', 'event_name', 'standardEventName', 'customEventName',
+    'eventType', 'pageName', 'virtualPageName', 'virtualPageview', 'pageview', 'screenName'];
 
   // ---- small helpers ------------------------------------------------------
   function getParam(entity, key) {
@@ -96,6 +132,27 @@
     return refs;
   }
 
+  // Recursively gather every string value inside a parameter (TEMPLATE values,
+  // and nested LIST -> MAP -> value structures).
+  function collectParamStrings(param, out) {
+    if (param == null) return;
+    if (param.value != null) out.push(String(param.value));
+    if (param.list) param.list.forEach(function (item) { collectParamStrings(item, out); });
+    if (param.map) param.map.forEach(function (item) { collectParamStrings(item, out); });
+  }
+
+  // All distinct {{variable}} references anywhere in a tag's parameters
+  // (including a Custom HTML tag's code body).
+  function collectAllRefs(tag) {
+    var strings = [];
+    (tag.parameter || []).forEach(function (p) { collectParamStrings(p, strings); });
+    var seen = {}, refs = [];
+    strings.forEach(function (s) {
+      extractRefs(s).forEach(function (r) { if (!seen[r]) { seen[r] = true; refs.push(r); } });
+    });
+    return refs;
+  }
+
   // ---- main entry ---------------------------------------------------------
   function parse(container) {
     var version = (container && container.containerVersion) || container || {};
@@ -118,7 +175,8 @@
         tagCount: tags.length,
         gaTagCount: 0,
         googleTagCount: 0,
-        ignoredTagCount: 0,
+        otherTagCount: 0,
+        htmlTagCount: 0,
         eventRenameCount: 0,
         fieldRenameCount: 0,
         userPropCount: 0,
@@ -132,12 +190,13 @@
       userProps: [],       // one per (tag, user property) — user-property mapping
       settingsVars: [],    // one per Event/Config Settings variable — parsed once
       settingsVarUses: [], // {ownerId, ownerName, ownerType, varName} references
-      ignoredTags: [],
+      otherTags: [],       // non-GA tags (html / other): dataLayer inputs + triggers
       warnings: []
     };
 
     var customJsSeen = {};
     var settingsVarSeen = {};
+    var tableSeen = {};
 
     tags.forEach(function (tag) {
       var type = tag.type;
@@ -151,13 +210,12 @@
         model.meta.gaTagCount++;
         model.meta.googleTagCount++;
         parseGoogleTag(tag);
+      } else if (HTML_TYPES.indexOf(type) !== -1) {
+        model.meta.htmlTagCount++;
+        parseOtherTag(tag, 'html');
       } else {
-        model.meta.ignoredTagCount++;
-        model.ignoredTags.push({
-          name: tag.name,
-          type: type,
-          typeLabel: TAG_TYPE_LABELS[type] || type
-        });
+        model.meta.otherTagCount++;
+        parseOtherTag(tag, 'other');
       }
     });
 
@@ -201,6 +259,109 @@
       linkSettingsVariable(tag.tagId, tag.name, 'tag', getParamValue(tag, 'configSettingsVariable'));
       linkSettingsVariable(tag.tagId, tag.name, 'tag', getParamValue(tag, 'eventSettingsVariable'));
       parseUserProperties(tag);
+    }
+
+    // Non-GA tag (Custom HTML or other/template). We infer named field mappings
+    // the same way we do for GA — the dataLayer field/constant/etc. feeding each
+    // of the tag's output fields (e.g. dataLayer "color" -> Meta Pixel
+    // "color_code") — from its parameter keys, key/value tables, and (for Custom
+    // HTML) "field: {{var}}" patterns in the code. Anything referenced but not
+    // tied to a named field is kept as a plain input. Triggers give the events.
+    function parseOtherTag(tag, category) {
+      var dlEvents = resolveTriggerEvents(tag.firingTriggerId || []);
+      var fields = [], usedRefs = {}, seenField = {};
+
+      function addField(name, valueRaw) {
+        if (name == null || valueRaw == null || seenField[name]) return;
+        seenField[name] = true;
+        var sources = resolveFieldSources(valueRaw);
+        var dlNames = collectDlFieldNames(sources);
+        fields.push({
+          field: name,
+          valueRaw: valueRaw,
+          sources: sources,
+          isRename: dlNames.length ? dlNames.indexOf(name) === -1 : false
+        });
+        extractRefs(valueRaw).forEach(function (r) { usedRefs[r] = true; });
+      }
+
+      (tag.parameter || []).forEach(function (p) {
+        if (category === 'html' && p.key === 'html') return; // handled via code scan
+        // A top-level parameter whose value references a variable is a field.
+        if (typeof p.value === 'string' && extractRefs(p.value).length) addField(p.key, p.value);
+        // Explicit key/value tables (custom parameters, query params, …).
+        if (p.list) {
+          p.list.forEach(function (row) {
+            if (!row.map) return;
+            addField(mapEntryValue(row, ['name', 'key', 'parameter']),
+              mapEntryValue(row, ['value', 'parameterValue']));
+          });
+        }
+      });
+
+      if (category === 'html') {
+        var code = getParamValue(tag, 'html') || '';
+        var m; FIELD_IN_CODE_RE.lastIndex = 0;
+        while ((m = FIELD_IN_CODE_RE.exec(code)) !== null) {
+          addField(m[1], '{{' + m[2].trim() + '}}');
+        }
+      }
+
+      // Event name (where the system has one — Meta/TikTok event, Contentsquare
+      // virtual pageview, …; Google Ads / Floodlight simply have none).
+      var eventName = detectEventName(tag, category, dlEvents);
+      if (eventName) extractRefs(eventName.raw).forEach(function (r) { usedRefs[r] = true; });
+
+      // Referenced variables not tied to a named field -> plain inputs.
+      var extraSources = [];
+      collectAllRefs(tag).forEach(function (r) {
+        if (!usedRefs[r]) extraSources.push(classifyVariable(r, {}));
+      });
+
+      model.otherTags.push({
+        tagId: tag.tagId,
+        tagName: tag.name,
+        type: tag.type,
+        typeLabel: typeLabel(tag.type),
+        category: category,        // 'html' | 'other'
+        dlEvents: dlEvents,        // triggers -> dataLayer events
+        eventName: eventName,      // {name, kind, sources, isRename} | null
+        fields: fields,            // [{field, valueRaw, sources, isRename}]
+        extraSources: extraSources // [{kind, name, dlFields}] un-named inputs
+      });
+    }
+
+    // Best-effort event-name detection for a non-GA tag. Returns null when the
+    // system has no event-name concept (Google Ads, Floodlight, …).
+    function detectEventName(tag, category, dlEvents) {
+      var raw = null;
+      if (category === 'html') {
+        var m = HTML_EVENT_RE.exec(getParamValue(tag, 'html') || '');
+        HTML_EVENT_RE.lastIndex = 0;
+        if (m) raw = m[1] != null ? m[1] : (m[2] != null ? '{{' + m[2].trim() + '}}' : null);
+      } else {
+        for (var i = 0; i < EVENT_NAME_KEYS.length && raw == null; i++) {
+          var v = getParamValue(tag, EVENT_NAME_KEYS[i]);
+          if (v != null && v !== '') raw = v;
+        }
+      }
+      if (raw == null || raw === '') return null;
+
+      var refs = extractRefs(raw);
+      var dlNames = dlEvents.map(function (e) { return e.eventName; });
+      if (refs.length === 0) {
+        return { raw: raw, name: raw, kind: 'literal', sources: [],
+          isRename: dlNames.indexOf(raw) === -1 };
+      }
+      // driven by a variable — a pass-through if it's the dataLayer event itself
+      var pass = refs.length === 1 && (refs[0] === '_event' || refs[0] === 'Event');
+      return {
+        raw: raw,
+        name: pass && dlEvents[0] ? dlEvents[0].eventName : raw,
+        kind: pass ? 'passthrough' : 'variable',
+        sources: pass ? [] : resolveFieldSources(raw),
+        isRename: !pass
+      };
     }
 
     // Push a table of parameter/value MAP rows onto model.fields for a tag.
@@ -420,7 +581,7 @@
       if (v.type === 'smm' || v.type === 'remm') {
         // Lookup table / regex table: a common rename mechanism. Its input is a
         // variable reference; resolve that to find the underlying dataLayer key.
-        model.meta.tableCount++;
+        if (!tableSeen[refName]) { tableSeen[refName] = true; model.meta.tableCount++; }
         var inputRaw = getParamValue(v, 'input') || '';
         var nestedT = extractRefs(inputRaw).map(function (n) { return classifyVariable(n, cloneSeen(seen)); });
         return {
